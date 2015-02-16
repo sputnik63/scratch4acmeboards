@@ -17,7 +17,7 @@
 #along with this program; if not, write to the Free Software
 #Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-__version__ = 'v0.1.1' # Feb 2015
+__version__ = 'v0.2' # Feb 2015
 import threading
 import socket
 import time
@@ -39,7 +39,6 @@ class ScratchSender(threading.Thread):
         self.scratch_socket = session.socket
         self._stop = threading.Event()
         #self.sleepTime = 0.1
-        self.loopCmd = "" # sensor update string
         logger.debug("Sender Init")
 
     def stop(self):
@@ -49,56 +48,40 @@ class ScratchSender(threading.Thread):
     def stopped(self):
         return self._stop.isSet()
 
-    def broadcast_pin_update(self, pin, value):
-        #Normal action is to just send updates to pin values but this can be modified if known addon in use
-        sensor_name = "pin" + str(pin)
-        sensorValue = str(value)
-
-        bcast_str = '"' + sensor_name + '" ' + sensorValue
-        self.addtosend_scratch_command(bcast_str)
-
-    def addtosend_scratch_command(self, cmd):
-        self.loopCmd += " "+ cmd
-        
     def setsleepTime(self, sleepTime):
         self.sleepTime = sleepTime
-        #print("sleeptime:%s", self.sleepTime ) 
-
-    def send_scratch_command(self, cmd):
-        n = len(cmd)
-        b = (chr((n >> 24) & 0xFF)) + (chr((n >> 16) & 0xFF)) + (chr((n >> 8) & 0xFF)) + (chr(n & 0xFF))
-        self.scratch_socket.send(b + cmd)
+        #print("sleeptime:%s", self.sleepTime )
 
     def run(self):
         logger.debug("Sender running in thread %s ...", self.name)
-        # set last pin pattern to inverse of current state
-        pin_bit_pattern = [0] * len(s4ahGC.ValidPins)
-        last_bit_pattern = [0] * len(s4ahGC.ValidPins)
-        #lastPinUpdateTime = time.time() 
+        #lastPinUpdateTime = time.time()
         lastTimeSinceLastSleep = time.time()
         self.sleepTime = 0.1
- 
+
         while not self.stopped():
             try:
                 loopTime = time.time() - lastTimeSinceLastSleep
                 if loopTime < self.sleepTime:
-                    sleepdelay = self.sleepTime -loopTime 
+                    sleepdelay = self.sleepTime -loopTime
                     time.sleep(sleepdelay) # be kind to cpu  :)
                     time.sleep(10) # be kind to cpu  :)
-                lastTimeSinceLastSleep = time.time() 
- 
-                # if there is a change in the input pins
+                lastTimeSinceLastSleep = time.time()
+
+                bcast_dict = {}
+                # check if there is a change in the input pins
                 for key in s4ahGC.ValidPins:
-                    idx = s4ahGC.ValidPins[key].index
-                    currVal = s4ahGC.pinRead(key)
-                    if currVal != last_bit_pattern[idx]:
-                        pin_bit_pattern[idx] = s4ahGC.ValidPins[key].value = currVal
-                        logger.debug("Change detected in pin:%s changed to:%s", key, pin_bit_pattern[idx]) 
-                        if (s4ahGC.ValidPins[key].mode in [s4ahGC.PINPUT]):
-                            self.broadcast_pin_update(key, pin_bit_pattern[idx])
+                    if s4ahGC.ValidPins[key].mode == s4ahGC.PINPUT:
+                        currVal = s4ahGC.pinRead(s4ahGC.ValidPins[key].name)
+                        if currVal != s4ahGC.ValidPins[key].value:
+                            s4ahGC.ValidPins[key].value = currVal
+                            bcast_dict['pin'+s4ahGC.ValidPins[key].name] = currVal
+                            logger.debug("Change detected in pin:%s changed to:%s", s4ahGC.ValidPins[key].name, currVal)
                             time.sleep(0.05) # just to give Scratch a better chance to react to event
- 
-                last_bit_pattern = pin_bit_pattern       
+
+                if bcast_dict:
+                    logger.debug('sending: %s', bcast_dict)
+                    self.session.sensorupdate(bcast_dict)
+
             except scratch.ScratchError, e:
                 logger.debug("sender raise ScratchError %s", e)
                 cycle_trace = 'disconnected'
@@ -110,10 +93,6 @@ class ScratchSender(threading.Thread):
                 continue
             except Exception:
                 continue
-
-            if self.loopCmd <> "":
-                self.send_scratch_command("sensor-update " + self.loopCmd)
-            self.loopCmd = ""
 
 
 class ScratchListener(threading.Thread):
@@ -171,7 +150,7 @@ class ScratchListener(threading.Thread):
         Check if this thread is stopped
         """
         return self._stop.isSet()
-    
+
     def listen(self):
         """
         Function to listen to messages from Scratch
@@ -203,15 +182,15 @@ class ScratchListener(threading.Thread):
         sghdebugon, sghdebugoff (or also sghdebug on, sghdebug off): to turn the debug on or off
         gettime: to get the board date and time
         getip: to get board ip address
-        version: to get the scratch4acmeboards version
+        getversion: to get the scratch4acmeboards version
         shutdown: to shutdown the board
         stophandler: to stop the handler
         """
         (cmdItem, cmdItemNum, cmdItemValue) = ('', '', '')
         cmdItemValueLen = 0
-        
-        # maybe pinpattern command will be removed since not all the Acmesystems
-        # boards have a pin numeration that can be used in this way
+
+        # maybe pinpattern command will be soon removed since not all the Acmesystems
+        # boards have a pin ordered numeration that can be used in this way
         if msgToParse.startswith('pinpattern'):
             cmdItem = 'pinpattern'
             cmdItemValue = msgToParse[len(cmdItem):].strip()
@@ -224,7 +203,7 @@ class ScratchListener(threading.Thread):
                 cmdItemValue = 'off'
                 cmdItemValueLen = -3
             else:
-                raise Exception ("Unknown command: " + msgToParse)
+                raise Exception("Unknown command: " + msgToParse)
             cmdItemNum = msgToParse[3:cmdItemValueLen]
             return (cmdItem, cmdItemNum, cmdItemValue)
         elif msgToParse.startswith('all'):
@@ -234,7 +213,7 @@ class ScratchListener(threading.Thread):
             elif msgToParse.endswith('off'):
                 cmdItemValue = 'off'
             else:
-                raise Exception ("Unknown command: " + msgToParse)
+                raise Exception("Unknown command: " + msgToParse)
             return (cmdItem, cmdItemNum, cmdItemValue)
         elif msgToParse.startswith('sghdebug'):
             cmdItem = 'sghdebug'
@@ -243,15 +222,21 @@ class ScratchListener(threading.Thread):
             elif msgToParse.endswith('off'):
                 cmdItemValue = 'off'
             else:
-                raise Exception ("Unknown command: " + msgToParse)
+                raise Exception("Unknown command: " + msgToParse)
             return (cmdItem, cmdItemNum, cmdItemValue)
         elif msgToParse.startswith('gettime'):
             cmdItem = 'gettime'
             return (cmdItem, cmdItemNum, cmdItemValue)
+        elif msgToParse.startswith('getip'):
+            cmdItem = 'getip'
+            return (cmdItem, cmdItemNum, cmdItemValue)
+        elif msgToParse.startswith('getversion'):
+            cmdItem = 'getversion'
+            return (cmdItem, cmdItemNum, cmdItemValue)
         else:
-            raise Exception ("Unknown command: " + msgToParse)
+            raise Exception("Unknown command: " + msgToParse)
 
-        
+
     def parseSensorUpdate(self, msgToParse):
         """
         Parse a broadcast message. Allowed sensor:
@@ -263,7 +248,7 @@ class ScratchListener(threading.Thread):
             cmdItemNum = msgToParse[3:]
             return (cmdItem, cmdItemNum)
 
-        
+
     def run(self):
         """
         This is the main listening thread routine
@@ -359,20 +344,12 @@ class ScratchListener(threading.Thread):
                         now = dt.datetime.now()
                         logger.debug("gettime %s", now)
                         fulldatetime = now.strftime('%Y%m%d%H%M%S')
-                        sensor_name = 'fulldatetime'
-                        bcast_str = 'sensor-update "%s" %s' % (sensor_name, fulldatetime)
-                        logger.debug('sending: %s', bcast_str)
-                        self.send_scratch_command(bcast_str)
                         hrs = fulldatetime[-6:-4]
-                        sensor_name = 'hours'
-                        bcast_str = 'sensor-update "%s" %s' % (sensor_name, hrs)
-                        logger.debug('sending: %s', bcast_str)
-                        self.send_scratch_command(bcast_str)
                         minutes = fulldatetime[-4:-2]
-                        sensor_name = 'minutes'
-                        bcast_str = 'sensor-update "%s" %s' % (sensor_name, minutes)
-                        logger.debug('sending: %s', bcast_str)
-                        self.send_scratch_command(bcast_str)
+                        secs = fulldatetime[-2:]
+                        bcast_dict = {'fulldatetime':fulldatetime, 'hours':hrs, 'minutes':minutes, 'seconds':secs}
+                        logger.debug('sending: %s', bcast_dict)
+                        self.session.sensorupdate(bcast_dict)
 
                     elif cmdItem == 'getip': #find ip address
                         logger.debug("Finding IP")
@@ -382,14 +359,13 @@ class ScratchListener(threading.Thread):
                         split_data = ipdata[0].split()
                         ipaddr = split_data[split_data.index('src')+1]
                         logger.debug("IP:%s", ipaddr)
-                        sensor_name = 'ipaddress'
-                        bcast_str = 'sensor-update "%s" %s' % (sensor_name, "ip"+ipaddr)
-                        self.send_scratch_command(bcast_str)
+                        bcast_dict = {'ipaddress':ipaddr}
+                        self.session.sensorupdate(bcast_dict)
 
-                    elif cmdItem == 'version':
-                        bcast_str = 'sensor-update "%s" %s' % ("Version", __version__)
-                        logger.debug('sending: %s', bcast_str)
-                        self.send_scratch_command(bcast_str)
+                    elif cmdItem == 'getversion':
+                        bcast_dict = {'version':__version__}
+                        logger.debug('sending: %s', bcast_dict)
+                        self.session.sensorupdate(bcast_dict)
 
                     elif cmdItem == 'shutdown':
                         os.system('sudo shutdown -h "now"')
@@ -400,7 +376,7 @@ class ScratchListener(threading.Thread):
                         sys.exit(0)
         except scratch.ScratchError, e:
             logger.error("Error: %s", e)
-7            #raise
+            #raise
     ###  End of  ScratchListner Class
 
 
@@ -426,7 +402,7 @@ def cleanup_threads(threads):
             continue
         logger.debug('joining %s', thread.getName())
         thread.join()
-    
+
     for thread in threads:
         logger.debug("thread %s is %s", thread.getName(), "alive" if thread.isAlive() else "dead")
 
@@ -460,14 +436,14 @@ if __name__ == '__main__':
     debugflag = options.debug
     printFlag = options.printtostdout
     boardName = options.boardname
-    
+
     if debugflag:
         logLevel = logging.DEBUG
     else:
         logLevel = logging.INFO
 
     # log on a rolling file in /tmp and error messages also in console
-    LOG_FILENAME = "/tmp/scratch4acmeboards.log"    
+    LOG_FILENAME = "/tmp/scratch4acmeboards.log"
     logger = logging.getLogger('s4ah_root_logger')
     if printFlag:
         logging.basicConfig(stream=sys.stdout,

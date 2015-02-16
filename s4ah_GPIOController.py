@@ -18,7 +18,7 @@
 #Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-import ablib as AB
+import ablib_test as AB
 import os
 import logging
 
@@ -43,7 +43,7 @@ PNONE = 255
 # to mantain aligned with ablib modes in pinmode
 POUTPUT = 'OUTPUT'
 PINPUT  = 'INPUT'
-PUNUSED = 'INPUT'  # unused pins are set to INPUT mode
+PUNUSED = 'NOTUSED'  # unused pins are set to INPUT mode
 
 
 class PinData():
@@ -120,14 +120,18 @@ class GPIOController:
         self.piRevision = self.getRevision()
         logger.debug("Board Revision %s", self.piRevision)
 
+        # map the pinname to mcuName creating the reverse map of the ablib
+        # mcuName2pinname dict: this is needed to store in PinData the mcuName
+        inv_map = {v:k for k, v in AB.mcuName2pinname[self.boardName].items()}
+
         # read from ablib the available pins
         idx = 0
         for key in AB.pin2kid.keys():
             for elem in connector_name[self.boardName]:
                 if key.startswith(elem):
-                    self.ValidPins[key] = PinData(idx, key)
+                    self.ValidPins[key] = PinData(idx, inv_map[key])
                     idx += 1
-                    logging.debug ("Configured default pin %s", self.ValidPins[key])
+                    logging.debug ("Configured pin %s", self.ValidPins[key])
 
         self.numOfValidPins = len(self.ValidPins)
 

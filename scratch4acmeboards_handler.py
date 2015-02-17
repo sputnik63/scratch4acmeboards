@@ -17,7 +17,7 @@
 #along with this program; if not, write to the Free Software
 #Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-__version__ = 'v0.2' # Feb 2015
+__version__ = 'v1.0' # Feb 2015
 import threading
 import socket
 import time
@@ -32,39 +32,51 @@ import scratch
 
 
 class ScratchSender(threading.Thread):
-
+    """
+    Class used by the thread sending to Scratch
+    """
     def __init__(self, session):
         threading.Thread.__init__(self)
         self.session = session
         self.scratch_socket = session.socket
         self._stop = threading.Event()
-        #self.sleepTime = 0.1
         logger.debug("Sender Init")
 
     def stop(self):
+        """
+        Set the thread as stopped
+        """
         self._stop.set()
         logger.debug("Sender Stop Set")
 
     def stopped(self):
+        """
+        Check if this thread is stopped
+        """
         return self._stop.isSet()
 
-    def setsleepTime(self, sleepTime):
-        self.sleepTime = sleepTime
-        #print("sleeptime:%s", self.sleepTime )
-
     def run(self):
+        """
+        This is the main sending thread routine
+        """
         logger.debug("Sender running in thread %s ...", self.name)
-        #lastPinUpdateTime = time.time()
         lastTimeSinceLastSleep = time.time()
-        self.sleepTime = 0.1
-
+        # I checked that the average time to poll all the 27 pins configured in 
+        # INPUT mode on Arietta goes from 43 to 45 msecs. So the 50 msecs time
+        # could be enough
+        self.sleepTime = 0.050
+        i=0.0
+        media=0
         while not self.stopped():
             try:
                 loopTime = time.time() - lastTimeSinceLastSleep
+                #loop_time_millis=loopTime*1000.0
+                #i+=1.0
+                #media=(media*(i-1)+loop_time_millis)/i
                 if loopTime < self.sleepTime:
-                    sleepdelay = self.sleepTime -loopTime
-                    time.sleep(sleepdelay) # be kind to cpu  :)
-                    time.sleep(10) # be kind to cpu  :)
+                    sleepdelay = self.sleepTime - loopTime
+                    #print loop_time_millis, sleepdelay*1000, loop_time_millis, media
+                    time.sleep(sleepdelay) # be kind to cpu :)
                 lastTimeSinceLastSleep = time.time()
 
                 bcast_dict = {}
@@ -75,8 +87,8 @@ class ScratchSender(threading.Thread):
                         if currVal != s4ahGC.ValidPins[key].value:
                             s4ahGC.ValidPins[key].value = currVal
                             bcast_dict['pin'+s4ahGC.ValidPins[key].name] = currVal
-                            logger.debug("Change detected in pin:%s changed to:%s", s4ahGC.ValidPins[key].name, currVal)
-                            time.sleep(0.05) # just to give Scratch a better chance to react to event
+                            logger.debug("Change detected in pin %s changed to %s", s4ahGC.ValidPins[key].name, currVal)
+                            #time.sleep(0.05) # just to give Scratch a better chance to react to event
 
                 if bcast_dict:
                     logger.debug('sending: %s', bcast_dict)
@@ -97,7 +109,7 @@ class ScratchSender(threading.Thread):
 
 class ScratchListener(threading.Thread):
     """
-    Class used by the thread listening fro Scratch
+    Class used by the thread listening from Scratch
     """
     def __init__(self, session):
         threading.Thread.__init__(self)
@@ -176,7 +188,6 @@ class ScratchListener(threading.Thread):
     def parseBroadcast(self, msgToParse):
         """
         Parse a broadcast message. Allowed messages:
-        pinpattern followed by a sequence of 0 and 1 (e.g. pinpattern 01011110)
         pinXXNNon, pinXXNNoff (e.g pinPA25on, pinPA8off): to set the single pin XXNN on or off
         allon, alloff: to set all the pins on the board on or foo
         sghdebugon, sghdebugoff (or also sghdebug on, sghdebug off): to turn the debug on or off
@@ -189,12 +200,7 @@ class ScratchListener(threading.Thread):
         (cmdItem, cmdItemNum, cmdItemValue) = ('', '', '')
         cmdItemValueLen = 0
 
-        # maybe pinpattern command will be soon removed since not all the Acmesystems
-        # boards have a pin ordered numeration that can be used in this way
-        if msgToParse.startswith('pinpattern'):
-            cmdItem = 'pinpattern'
-            cmdItemValue = msgToParse[len(cmdItem):].strip()
-        elif msgToParse.startswith('pin'):
+        if msgToParse.startswith('pin'):
             cmdItem = 'pin'
             if msgToParse.endswith('on'):
                 cmdItemValue = 'on'
@@ -232,6 +238,24 @@ class ScratchListener(threading.Thread):
             return (cmdItem, cmdItemNum, cmdItemValue)
         elif msgToParse.startswith('getversion'):
             cmdItem = 'getversion'
+            return (cmdItem, cmdItemNum, cmdItemValue)
+        elif msgToParse.startswith('shutdown'):
+            cmdItem = 'shutdown'
+            return (cmdItem, cmdItemNum, cmdItemValue)
+        elif msgToParse.startswith('config'):
+            cmdItem = 'config'
+            if msgToParse.endswith('in'):
+                cmdItemValue = s4ahGC.PINPUT
+                cmdItemValueLen = -2
+            elif msgToParse.endswith('out'):
+                cmdItemValue = s4ahGC.POUTPUT
+                cmdItemValueLen = -3
+            elif msgToParse.endswith('nu'):
+                cmdItemValue = s4ahGC.PUNUSED
+                cmdItemValueLen = -2
+            else:
+                raise Exception("Unknown command: " + msgToParse)
+            cmdItemNum = msgToParse[6:cmdItemValueLen]
             return (cmdItem, cmdItemNum, cmdItemValue)
         else:
             raise Exception("Unknown command: " + msgToParse)
@@ -296,48 +320,32 @@ class ScratchListener(threading.Thread):
                 for singleCmd in cmdList:
                     (cmdItem, cmdItemNum, cmdItemValue) = singleCmd
 
-                    if not self.parseItemValue(cmdItemValue):
-                        logger.error("Unable to parse value %s ", cmdItemValue)
-                        continue
-
                     if cmdItem == 'sghdebug':
-                        if (self.value == "1") and (debugLogging):
+                        if (cmdItemValue == "on") and (debugLogging):
                             logging.getLogger().setLevel(logging.DEBUG)
                             debugLogging = True
-                        if (self.value == "0") and (debugLogging):
+                        if (cmdItemValue == "off") and (debugLogging):
                             logging.getLogger().setLevel(logging.INFO)
                             debugLogging = False
 
                     elif cmdItem == 'pin':
+                        if not self.parseItemValue(cmdItemValue):
+                            logger.error("Unable to parse value %s ", cmdItemValue)
+                            continue
                         s4ahGC.pinUpdate(cmdItemNum, self.valueNumeric)
 
                     elif cmdItem == 'all':
+                        if not self.parseItemValue(cmdItemValue):
+                            logger.error("Unable to parse value %s ", cmdItemValue)
+                            continue
                         s4ahGC.pinUpdateAll(self.valueNumeric)
 
-                    #Use bit pattern to control ports
-                    elif cmdItem == 'pinpattern':
-                        if self.value == None:
-                            # assume that an empty value received means a reset all pin
-                            self.value = '0'*len(s4ahGC.ValidPins)
+                    elif cmdItem == 'config':
+                        if cmdItemNum == 'all':
+                            s4ahGC.setAllPins(cmdItemValue)
+                        else:
+                            s4ahGC.setPinMode(cmdItemNum, cmdItemValue)
 
-                        svalue = self.value
-
-                        # build bitpattern adding 0s at the beginning of the pitpattern received
-                        bit_pattern = ('0'*(len(s4ahGC.ValidPins)-len(svalue)))+svalue
-                        logger.debug('bit_pattern %s', bit_pattern)
-                        logger.debug("commands received: %s", singleCmd)
-                        logger.debug("pattern value %s", cmdItemValue)
-                        j = 0
-                        onSense = '0'
-                        for i in range(s4ahGC.numOfValidPins):
-                            logger.debug("analyzing pin %s use %s", s4ahGC.ValidPins[i].name, s4ahGC.ValidPins[i].mode)
-                            if (s4ahGC.ValidPins[i].mode == s4ahGC.PUNUSED) or (s4ahGC.ValidPins[i].mode == s4ahGC.POUTPUT):
-                                logger.debug("trying to update pin to %s", bit_pattern[-(j+1)])
-                                if bit_pattern[-(j+1)] == onSense:
-                                    s4ahGC.pinUpdate(s4ahGC.ValidPins[i].name, 0)
-                                else:
-                                    s4ahGC.pinUpdate(s4ahGC.ValidPins[i].name, 1)
-                                j = j + 1
                     ### Check for other broadcast type messages being received
 
                     if cmdItem == 'gettime':
@@ -374,6 +382,7 @@ class ScratchListener(threading.Thread):
                         logger.debug("stop handler msg sent from Scratch")
                         cleanup_threads((listener, sender))
                         sys.exit(0)
+
         except scratch.ScratchError, e:
             logger.error("Error: %s", e)
             #raise
@@ -406,7 +415,7 @@ def cleanup_threads(threads):
     for thread in threads:
         logger.debug("thread %s is %s", thread.getName(), "alive" if thread.isAlive() else "dead")
 
-    #s4ahGC.resetPinMode()
+    #s4ahGC.resetAllPins()
     logger.debug("cleanup threads finished")
 
 
@@ -495,12 +504,12 @@ if __name__ == '__main__':
                 logger.info("Scratch disconnected")
                 cleanup_threads((listener, sender))
                 logger.debug("Thread cleanup done after disconnect")
-                s4ahGC.resetPinMode()
+                s4ahGC.resetAllPins()
                 logger.debug("Pin Reset Done")
                 time.sleep(1)
                 cycle_trace = 'start'
 
-            time.sleep(0.01) # needed to catch keyboard interrupts
+            time.sleep(0.010) # needed to catch keyboard interrupts
 
         except scratch.ScratchError:
             logger.info("There was an error connecting to Scratch!")
@@ -517,13 +526,15 @@ if __name__ == '__main__':
                 # needed if the KeyboardInterrupt occurs during the connectins attempt
                 # before that a listener or sender instance is created
                 pass
-            s4ahGC.resetPinMode()
+            s4ahGC.resetAllPins()
             logger.debug("Pin Reset Done")
             sys.exit(0)
             logger.debug("CleanUp complete")
         except scratch.ScratchConnectionError, e:
             logger.error("ScratchConnectionError %s", e)
         except Exception, e:
-            logger.error("Unknown error %s", e)
+            template = "{0} exception occured"
+            message = template.format(type(e).__name__, e.args)
+            logger.error(message)
 
 #### End of main program

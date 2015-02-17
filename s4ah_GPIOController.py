@@ -18,7 +18,7 @@
 #Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-import ablib_test as AB
+import ablib as AB
 import os
 import logging
 
@@ -137,31 +137,67 @@ class GPIOController:
 
         # End init
 
-    def resetPinMode(self):
+    def resetAllPins(self):
         """
         reset all pins
         """
-        logger.debug("resetting pin mode")
+        logger.debug("resetting all pins")
         for key in self.ValidPins:
             if self.ValidPins[key].mode != PUNUSED:
-                AB.Pin(self.ValidPins[key].name, PUNUSED)
-                self.ValidPins[key].mode = PUNUSED
-                self.ValidPins[key].value = PNONE
-                self.ValidPins[key].invert = False
-                logger.debug("reset pin %s", self.ValidPins[key].name)
+                self.resetPin(self.ValidPins[key].name)
 
-    def setPinMode(self):
+
+    def resetPin(self, pinName):
+        """
+        reset all pins
+        """
+        pinName = pinName.upper()
+        if pinName not in self.ValidPins.keys():
+            if pinName[:2] in ["PA", "PB", "PC", "PD", "PE"] and \
+               pinName in AB.mcuName2pinname[self.boardName]:
+                pinName = AB.mcuName2pinname[self.boardName][pinName]
+            else:
+                logger.error("pinUpdate: unknown pin %s", pinName)
+                return
+
+        if  self.ValidPins[pinName].mode != PUNUSED:
+            AB.Pin(pinName, PINPUT)
+            self.ValidPins[pinName].mode = PUNUSED
+            self.ValidPins[pinName].value = PNONE
+            self.ValidPins[pinName].invert = False
+            logger.debug("reset pin %s", pinName)
+
+
+    def setAllPins(self, mode):
+        """
+        set all pins with the passed mode
+        """
+        logger.debug("setting all pins to %s", mode)
+        for key in self.ValidPins:
+            self.setPinMode(self.ValidPins[key].name, mode)
+
+
+    def setPinMode(self, pinName, mode):
         """
         set pin mode for a single pin
         """
-        for key in self.ValidPins:
-            if self.ValidPins[key].mode == POUTPUT:
-                logger.debug("setting pin %s to output mode", self.ValidPins[key].name)
-                AB.Pin(self.ValidPins[key].name, POUTPUT)
-                self.ValidPins[key].value = 0
-            elif self.ValidPins[key].mode == PINPUT:
-                logger.debug("setting pin %s to input mode", self.ValidPins[key].name)
-                AB.Pin(key, PINPUT)
+        pinName = pinName.upper()
+        if pinName not in self.ValidPins.keys():
+            if pinName[:2] in ["PA", "PB", "PC", "PD", "PE"] and \
+               pinName in AB.mcuName2pinname[self.boardName]:
+                pinName = AB.mcuName2pinname[self.boardName][pinName]
+            else:
+                logger.error("pinUpdate: unknown pin %s", pinName)
+                return
+            
+        if self.ValidPins[pinName].mode == mode:
+            logger.debug("pin mode not changed: do nothing")
+            return
+
+        self.ValidPins[pinName].mode = mode
+        AB.Pin(pinName, mode)
+        logger.debug("pin %s set to %s mode", pinName, mode)
+
 
     def isNumeric(self, s):
         """

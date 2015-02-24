@@ -3,12 +3,12 @@ python program to use Scratch software by MIT with Acmesystems s.r.l. boards
 
 
 **scratch4acmeboards** allows Scratch 1.4 by MIT to manage the GPIO pins of Arietta, a Linux embedded module by Acmesystems s.r.l based on an Atmel mcrocontroller.
-In this early release all the pins are in OUTPUT mode. In the future releases the GPIO pins will be also managed in INPUT mode. For now, only the board Arietta G25 is tested but I'm confident it could work also on other boards.
+The pins are managed both in OUTPUT and in INPUT mode. For now, only the board Arietta G25 is tested but I'm confident it could work also on other boards.
 
 # Getting started
 
 Connect Arietta to your PC through USB port or wifi module
-If needed update the [ablib fork](https://github.com/sputnik63/ablib) on github
+If needed update [ablib](https://github.com/tanzilli/ablib) from github
 Install the [scratchpy client](https://github.com/pilliq/scratchpy)
 Download scratch4acmeboards files and put them on Arietta. Then, as root, run the command
 
@@ -38,4 +38,4 @@ Options:
                         ACMESystems board name among Arietta_G25 (default),
                         Daisy, Acqua_A5, FOX_Board_G20, Aria_G25
 ```
-A complete tutorial in italian language is [available here] (http://www.coderdojomolfetta.it/scratch-per-arietta-g25/).
+Complete tutorials in italian and english languages are [available here] (http://www.coderdojomolfetta.it/scratch-per-arietta-g25/).

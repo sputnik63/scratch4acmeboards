@@ -196,6 +196,8 @@ class ScratchListener(threading.Thread):
         getversion: to get the scratch4acmeboards version
         shutdown: to shutdown the board
         stophandler: to stop the handler
+        configXXNNin, configXXNNout, configXXNNnu (e.g configPA25in, configPA8out, configPA10nu):
+                        to configure the pin XXNN in OUTPUT or INPUT mode or NOT USED
         """
         (cmdItem, cmdItemNum, cmdItemValue) = ('', '', '')
         cmdItemValueLen = 0
@@ -242,6 +244,9 @@ class ScratchListener(threading.Thread):
         elif msgToParse.startswith('shutdown'):
             cmdItem = 'shutdown'
             return (cmdItem, cmdItemNum, cmdItemValue)
+        elif msgToParse.startswith('stophandler'):
+            cmdItem = 'stophandler'
+            return (cmdItem, cmdItemNum, cmdItemValue)
         elif msgToParse.startswith('config'):
             cmdItem = 'config'
             if msgToParse.endswith('in'):
@@ -264,7 +269,7 @@ class ScratchListener(threading.Thread):
     def parseSensorUpdate(self, msgToParse):
         """
         Parse a broadcast message. Allowed sensor:
-        pinXXyyon, pinXXyyoff (e.g pinPA25on, pinPA8off)
+        pinXXNN, pinXXNN (e.g pinPA25, pinPA8)
         """
         (cmdItem, cmdItemNum) = ('', '')
         if msgToParse.startswith('pin'):
@@ -284,6 +289,11 @@ class ScratchListener(threading.Thread):
         debugLogging = True
         try:
             for msg in self.listen():
+                # if on Scratch you load a new project without stopping the
+                # one in execution self.listen() returns None and all hangs
+                if msg == None:
+                    continue;
+
                 msgType = msg[0]
 
                 cmdList = []    # used to hold lists of all broadcasts or sensor updates
@@ -379,13 +389,14 @@ class ScratchListener(threading.Thread):
                         os.system('sudo shutdown -h "now"')
 
                     elif cmdItem == 'stophandler':
-                        logger.debug("stop handler msg sent from Scratch")
+                        logger.debug("stop handler msgs sent from Scratch")
                         cleanup_threads((listener, sender))
                         sys.exit(0)
 
         except scratch.ScratchError, e:
             logger.error("Error: %s", e)
             #raise
+
     ###  End of  ScratchListner Class
 
 

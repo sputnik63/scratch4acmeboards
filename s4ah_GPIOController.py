@@ -50,10 +50,11 @@ class PinData():
     """
     Here are all the useful info about a single pin
     """
-    def __init__(self, index, name):
-        self.index = index   # not used for now
-        self.name = name     # pin label according the board layout (usually the MCU name e.g PA23)
-        self.mode = PUNUSED  # it can be PUNUSED, POUTPUT, PINPUT
+    def __init__(self, instance, name):
+        self.instance = instance
+        self.thread = None   # used to stop the threads started in INPUT mode
+        self.name = name       # pin label according the board layout (usually the MCU name e.g PA23)
+        self.mode = PUNUSED    # it can be PUNUSED, POUTPUT, PINPUT
         self.value = PNONE
         self.kernelId = AB.pinname2kernelid(name)
         self.invert = False
@@ -86,22 +87,33 @@ class GPIOController:
         self.PINPUT = PINPUT
         self.PUNUSED = PUNUSED
         
-        if self.boardName not in supportedBoards:
-            message = "board " + self.boardName + " not supported"
-            raise S4AHException (message)
+        #if self.boardName not in supportedBoards:
+            #message = "board " + self.boardName + " not yet supported"
+            #raise S4AHException (message)
 
         if offline:
             # for developers only: this is only for testing offline with
             # an ablib modified to write on /tmp instead of real /sys area
             testdir = "/tmp/ablib/sys/class/gpio/"
             val = '0'
-            for key in AB.mcuName2pinname[boardName]:
-                dirname = testdir + "pio" + key[1:]
-                if not os.path.exists(dirname):
-                    os.makedirs(dirname)
-                    fh = open(dirname + "/value", 'w')
-                    fh.write(val)
-                    fh.close()
+            if self.boardName != 'Aria_G25':
+                for key in AB.mcuName2pinname[self.boardName]:
+                    dirname = testdir + "pio" + key[1:]
+                    if not os.path.exists(dirname):
+                        os.makedirs(dirname)
+                        fh = open(dirname + "/value", 'w')
+                        fh.write(val)
+                        fh.close()
+            else:
+                for key in AB.pin2kid.keys():
+                    for elem in connector_name[self.boardName]:
+                        if key.startswith(elem):
+                            dirname = testdir + "pio" + key[1:]
+                            if not os.path.exists(dirname):
+                                os.makedirs(dirname)
+                                fh = open(dirname + "/value", 'w')
+                                fh.write(val)
+                                fh.close()                
             fh = open(testdir + "export", 'w')
             fh.close()
             fh = open(testdir + "unexport", 'w')
@@ -122,20 +134,24 @@ class GPIOController:
 
         # map the pinname to mcuName creating the reverse map of the ablib
         # mcuName2pinname dict: this is needed to store in PinData the mcuName
-        inv_map = {v:k for k, v in AB.mcuName2pinname[self.boardName].items()}
+        # inv_map = {v:k for k, v in AB.mcuName2pinname[self.boardName].items()}
 
         # read from ablib the available pins
-        idx = 0
-        for key in AB.pin2kid.keys():
-            for elem in connector_name[self.boardName]:
-                if key.startswith(elem):
-                    self.ValidPins[key] = PinData(idx, inv_map[key])
-                    idx += 1
-                    logging.debug ("Configured pin %s", self.ValidPins[key])
+        if self.boardName != 'Aria_G25':
+            for key in AB.mcuName2pinname[self.boardName].keys():
+                self.ValidPins[key] = PinData(None, key)
+                logging.debug ("Configured pin %s", self.ValidPins[key])
+        else:
+            #Aria G25 has the pin name already ok in pin2kid dictionary of ablib
+            for key in AB.pin2kid.keys():
+                for elem in connector_name[self.boardName]:
+                    if key.startswith(elem):
+                        self.ValidPins[key] = PinData(None, key)
+                        logging.debug ("Configured pin %s", self.ValidPins[key])
 
         self.numOfValidPins = len(self.ValidPins)
-
         # End init
+
 
     def resetAllPins(self):
         """
@@ -153,15 +169,14 @@ class GPIOController:
         """
         pinName = pinName.upper()
         if pinName not in self.ValidPins.keys():
-            if pinName[:2] in ["PA", "PB", "PC", "PD", "PE"] and \
-               pinName in AB.mcuName2pinname[self.boardName]:
-                pinName = AB.mcuName2pinname[self.boardName][pinName]
-            else:
-                logger.error("pinUpdate: unknown pin %s", pinName)
-                return
+            logger.error("unknown pin %s", pinName)
+            return
 
         if  self.ValidPins[pinName].mode != PUNUSED:
-            AB.Pin(pinName, PINPUT)
+            # set the default mode to OUTPUT: INPUT mode with trigger
+            # should start one thread for each pin
+            self.ValidPins[pinName].instance = None
+            AB.Pin(pinName, POUTPUT)
             self.ValidPins[pinName].mode = PUNUSED
             self.ValidPins[pinName].value = PNONE
             self.ValidPins[pinName].invert = False
@@ -183,12 +198,8 @@ class GPIOController:
         """
         pinName = pinName.upper()
         if pinName not in self.ValidPins.keys():
-            if pinName[:2] in ["PA", "PB", "PC", "PD", "PE"] and \
-               pinName in AB.mcuName2pinname[self.boardName]:
-                pinName = AB.mcuName2pinname[self.boardName][pinName]
-            else:
-                logger.error("pinUpdate: unknown pin %s", pinName)
-                return
+            logger.error("setPinMode: unknown pin %s", pinName)
+            return
             
         if self.ValidPins[pinName].mode == mode:
             logger.debug("pin mode not changed: do nothing")
@@ -209,6 +220,7 @@ class GPIOController:
         except ValueError:
             return False
 
+
     def pinUpdate(self, pinName, value):
         """
         main function to update a pin: the passed name has to be a valid name. It has to be among the keys read
@@ -217,45 +229,35 @@ class GPIOController:
 
         pinName = pinName.upper()
         if pinName not in self.ValidPins.keys():
-            if pinName[:2] in ["PA", "PB", "PC", "PD", "PE"] and \
-               pinName in AB.mcuName2pinname[self.boardName]:
-                pinName = AB.mcuName2pinname[self.boardName][pinName]
-            else:
-                logger.error("pinUpdate: unknown pin %s", pinName)
-                return
-
-        logger.debug("pinUpdate pin %s value %s use %s to %s", pinName, self.ValidPins[pinName].value, self.ValidPins[pinName].mode, value)
+            logger.error("unknown pin %s", pinName)
+            return
 
         if self.ValidPins[pinName].value == value:
-            logger.debug("pin value not changed: do nothing")
+            logger.debug("pin %s value %s not changed: do nothing", pinName, value)
             return
+        else:
+            logger.debug("update pin:%s value:%s use:%s to value:%s", pinName, self.ValidPins[pinName].value, self.ValidPins[pinName].mode, value)
 
          #if not self.isNumeric(value):
              #logger.error("Value %s not admitted: pin %s unchanged", value, pinName)
              #return
 
         try:
-            logger.debug("Pin %s commanded to be %s", pinName, value)
+            logger.debug("pin %s commanded to be %s", pinName, value)
             if self.ValidPins[pinName].invert: # is True: Invert data value (useful for 7 segment common anode displays)
                 value = 1 - abs(value)
-            if self.ValidPins[pinName].mode == POUTPUT: # if already an output
+            if self.ValidPins[pinName].mode == POUTPUT: # if already in output
                 self.ValidPins[pinName].value = value
-                AB.set_value(self.ValidPins[pinName].kernelId, value) # set output to 1 or 0
+                self.ValidPins[pinName].instance.set_value(value) # set output to 1 or 0
                 logger.debug("pin %s set to %s", pinName, value)
 
-            elif self.ValidPins[pinName].mode in [PINPUT]: # if pin is an input
+            elif self.ValidPins[pinName].mode in [PUNUSED, PINPUT]: # if pin is in input or not used
+                old_mode = self.ValidPins[pinName].mode;
                 self.ValidPins[pinName].mode = POUTPUT # switch it to output
-                AB.Pin(pinName, POUTPUT)
+                self.ValidPins[pinName].instance = AB.Pin(pinName, POUTPUT)
                 self.ValidPins[pinName].value = value
-                AB.set_value(self.ValidPins[pinName].kernelId, int(value)) # set output to 1 to 0
-                logger.debug('pin %s was in input - change to output value %s', pinName, value)
-
-            elif self.ValidPins[pinName].mode == PUNUSED: # if pin is not allocated
-                self.ValidPins[pinName].mode = POUTPUT # switch it to output
-                AB.Pin(pinName, POUTPUT)
-                self.ValidPins[pinName].value = value # set output to 1 or 0
-                AB.set_value(self.ValidPins[pinName].kernelId, int(value))
-                logger.debug("pin %s was unused - now output to value %s", pinName, value)
+                self.ValidPins[pinName].instance.set_value(value) # set output to 1 to 0
+                logger.debug("pin %s was %s - now output to value %s", pinName, old_mode, value)
 
         except ValueError:
             logger.error("Error trying to update pin %s to value %s", pinName, value)
@@ -273,12 +275,8 @@ class GPIOController:
 
         pinName = pinName.upper()
         if pinName not in self.ValidPins.keys():
-            if pinName[:2] in ["PA", "PB", "PC", "PD", "PE"] and \
-               pinName in AB.mcuName2pinname[self.boardName]:
-                pinName = AB.mcuName2pinname[self.boardName][pinName]
-            else:
-                logger.error("pinRead: unknown pin %s", pinName)
-                return
+            logger.error("pinRead: unknown pin %s", pinName)
+            return
 
         try:
             return AB.get_value(self.ValidPins[pinName].kernelId)
